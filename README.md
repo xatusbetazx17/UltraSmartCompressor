@@ -204,6 +204,10 @@ def start_compression(file_path):
         root.after(0, lambda: remaining_time_label.config(text=f"Remaining Time: {str(datetime.timedelta(seconds=int(remaining)))}"))
         root.after(0, lambda: time_progress_var.set((elapsed / (elapsed + remaining)) * 100))
 
+    def show_completion_message(compressed_file_path):
+        messagebox.showinfo("Compression Complete", f"File has been compressed successfully:\n{compressed_file_path}")
+        root.quit()
+
     root = tk.Tk()
     root.title("SmartCompressProUltimate - Compression Progress")
     root.geometry("400x300")
@@ -224,13 +228,12 @@ def start_compression(file_path):
 
     def compress_file():
         compressor = SmartCompressProUltimate(file_path)
-        compressed_file_path = compressor.compress_in_parallel(
+        compressed_file_path = compressor.write_file(compressor.compress_in_parallel(
             data=compressor.read_file(),
             progress_callback=update_progress_bar,
             time_callback=update_time_labels
-        )
-        messagebox.showinfo("Compression Complete", f"File has been compressed successfully:\n{compressed_file_path}")
-        root.quit()
+        ))
+        root.after(0, lambda: show_completion_message(compressed_file_path))
 
     threading.Thread(target=compress_file).start()
     root.mainloop()
