@@ -42,18 +42,21 @@ def install_package(python_exec, package, pip_name=None):
 try:
     from PIL import Image, ImageTk  # For handling icons and better UI visuals
 except ImportError:
-    # If ImportError occurs, install Pillow and retry
     install_package(python_exec, 'Pillow', 'Pillow')
-    # Re-run the script with the virtual environment python to ensure Pillow is available
     if python_exec != sys.executable:
         os.execv(python_exec, [python_exec] + sys.argv)
 
 try:
     import py7zr  # Added to handle 7z files
 except ImportError:
-    # If ImportError occurs, install py7zr and retry
     install_package(python_exec, 'py7zr', 'py7zr')
-    # Re-run the script with the virtual environment python to ensure py7zr is available
+    if python_exec != sys.executable:
+        os.execv(python_exec, [python_exec] + sys.argv)
+
+try:
+    import pycdlib  # Added to handle ISO files
+except ImportError:
+    install_package(python_exec, 'pycdlib', 'pycdlib')
     if python_exec != sys.executable:
         os.execv(python_exec, [python_exec] + sys.argv)
 
@@ -62,7 +65,7 @@ class SmartCompressApp:
     def __init__(self, root):
         self.root = root
         self.root.title("SmartCompressProUltimate")
-        self.root.geometry("800x600")
+        self.root.geometry("1000x700")
         
         # Setting up the main frames
         self.setup_main_interface()
@@ -82,6 +85,9 @@ class SmartCompressApp:
 
         extract_button = tk.Button(toolbar_frame, text="Extract", relief=tk.FLAT, command=self.extract_files)
         extract_button.pack(side=tk.LEFT, padx=2, pady=2)
+
+        preview_button = tk.Button(toolbar_frame, text="Preview Archive", relief=tk.FLAT, command=self.preview_archive)
+        preview_button.pack(side=tk.LEFT, padx=2, pady=2)
 
     def create_tabbed_area(self):
         tab_control = ttk.Notebook(self.root)
@@ -119,6 +125,31 @@ class SmartCompressApp:
             self.compress_listbox.insert(tk.END, file)
             self.decompress_listbox.insert(tk.END, file)
 
+    def preview_archive(self):
+        selected_file = filedialog.askopenfilename(title="Select Archive to Preview")
+        if not selected_file:
+            return
+
+        # Preview the contents of the archive
+        try:
+            if zipfile.is_zipfile(selected_file):
+                with zipfile.ZipFile(selected_file, 'r') as zipf:
+                    contents = zipf.namelist()
+            elif tarfile.is_tarfile(selected_file):
+                with tarfile.open(selected_file, 'r:*') as tarf:
+                    contents = tarf.getnames()
+            elif selected_file.endswith('.7z'):
+                with py7zr.SevenZipFile(selected_file, 'r') as sevenz:
+                    contents = sevenz.getnames()
+            else:
+                messagebox.showerror("Unsupported Archive", "Cannot preview this archive format.")
+                return
+
+            messagebox.showinfo("Archive Contents", "\n".join(contents))
+        except Exception as e:
+            logging.error(f"Error previewing archive: {e}")
+            messagebox.showerror("Error", f"Failed to preview archive: {e}")
+
     def extract_files(self):
         self.start_extraction()
 
@@ -133,22 +164,52 @@ class SmartCompressApp:
             return
 
         for file in selected_files:
-            if zipfile.is_zipfile(file):
-                with zipfile.ZipFile(file, 'r') as zipf:
-                    zipf.extractall(extract_folder)
-                    logging.info(f"Extracting file: {file}")
-            elif tarfile.is_tarfile(file):
-                with tarfile.open(file, 'r:*') as tarf:
-                    tarf.extractall(path=extract_folder)
-                    logging.info(f"Extracting file: {file}")
-            elif file.endswith('.7z'):
-                with py7zr.SevenZipFile(file, 'r') as sevenz:
-                    sevenz.extractall(path=extract_folder)
-                    logging.info(f"Extracting file: {file}")
-            else:
-                messagebox.showerror("Unsupported File", f"Cannot extract: {file}. Supported formats are zip, tar.gz, and 7z.")
+            try:
+                if zipfile.is_zipfile(file):
+                    with zipfile.ZipFile(file, 'r') as zipf:
+                        zipf.extractall(extract_folder)
+                elif tarfile.is_tarfile(file):
+                    with tarfile.open(file, 'r:*') as tarf:
+                        tarf.extractall(path=extract_folder)
+                elif file.endswith('.7z'):
+                    with py7zr.SevenZipFile(file, 'r') as sevenz:
+                        sevenz.extractall(path=extract_folder)
+                elif file.endswith('.iso'):
+                    self.extract_iso(file, extract_folder)
+                else:
+                    messagebox.showerror("Unsupported File", f"Cannot extract: {file}. Supported formats are zip, tar.gz, 7z, and iso.")
+                    continue
+                logging.info(f"Extracting file: {file}")
+            except Exception as e:
+                logging.error(f"Error extracting file '{file}': {e}")
+                messagebox.showerror("Error", f"Error extracting '{file}': {e}")
 
         messagebox.showinfo("Extraction Complete", f"Files successfully extracted to: {extract_folder}")
+
+    def extract_iso(self, iso_path, extract_folder):
+        """Extract ISO contents using pycdlib."""
+        iso = pycdlib.PyCdlib()
+        try:
+            iso.open(iso_path)
+            os.makedirs(extract_folder, exist_ok=True)
+            logging.info(f"Extracting ISO: {iso_path}")
+
+            for dir_record in iso.list_children(iso_path='/'):
+                if dir_record.file_flag == 0:  # 0 indicates it's a file
+                    file_name = dir_record.file_identifier().decode('utf-8').strip(';1')
+                    output_path = os.path.join(extract_folder, file_name)
+                    with open(output_path, 'wb') as outstream:
+                        iso.get_file_from_iso(iso_path=dir_record.iso_path(), outstream=outstream)
+                    logging.info(f"Extracted: {file_name}")
+                elif dir_record.file_flag == 2:  # 2 indicates it's a directory
+                    dir_name = dir_record.file_identifier().decode('utf-8').strip(';1')
+                    os.makedirs(os.path.join(extract_folder, dir_name), exist_ok=True)
+
+            iso.close()
+            logging.info(f"ISO extracted to: {extract_folder}")
+        except Exception as e:
+            logging.error(f"Error extracting ISO: {e}")
+            messagebox.showerror("Error", f"Failed to extract ISO: {e}")
 
     def start_compression(self):
         selected_files = [self.compress_listbox.get(i) for i in self.compress_listbox.curselection()]
@@ -156,35 +217,34 @@ class SmartCompressApp:
             messagebox.showwarning("No Files Selected", "Please select files to compress.")
             return
 
-        # Ask the user for the desired compression format
         compression_format = simpledialog.askstring("Select Format", "Enter compression format (zip, tar.gz, 7z):", parent=self.root)
         if not compression_format:
             return
 
-        # Get the destination for the compressed file
         output_filename = filedialog.asksaveasfilename(defaultextension=f".{compression_format}", filetypes=[("All Files", "*.*")])
         if not output_filename:
             return
 
-        # Compress the selected files
-        if compression_format == 'zip':
-            with zipfile.ZipFile(output_filename, 'w') as zipf:
-                for file in selected_files:
-                    zipf.write(file, os.path.basename(file))
-                    logging.info(f"Compressing file: {file}")
-        elif compression_format == 'tar.gz':
-            with tarfile.open(output_filename, 'w:gz') as tarf:
-                for file in selected_files:
-                    tarf.add(file, arcname=os.path.basename(file))
-                    logging.info(f"Compressing file: {file}")
-        elif compression_format == '7z':
-            with py7zr.SevenZipFile(output_filename, 'w') as sevenz:
-                for file in selected_files:
-                    sevenz.write(file, arcname=os.path.basename(file))
-                    logging.info(f"Compressing file: {file}")
-        else:
-            messagebox.showerror("Unsupported Format", f"The format '{compression_format}' is not supported.")
-            return
+        try:
+            if compression_format == 'zip':
+                with zipfile.ZipFile(output_filename, 'w') as zipf:
+                    for file in selected_files:
+                        zipf.write(file, os.path.basename(file))
+            elif compression_format == 'tar.gz':
+                with tarfile.open(output_filename, 'w:gz') as tarf:
+                    for file in selected_files:
+                        tarf.add(file, arcname=os.path.basename(file))
+            elif compression_format == '7z':
+                with py7zr.SevenZipFile(output_filename, 'w') as sevenz:
+                    for file in selected_files:
+                        sevenz.write(file, arcname=os.path.basename(file))
+            else:
+                messagebox.showerror("Unsupported Format", f"The format '{compression_format}' is not supported.")
+                return
+            logging.info(f"Files successfully compressed to: {output_filename}")
+        except Exception as e:
+            logging.error(f"Error compressing files: {e}")
+            messagebox.showerror("Error", f"Error compressing files: {e}")
 
         messagebox.showinfo("Compression Complete", f"Files successfully compressed to: {output_filename}")
 
