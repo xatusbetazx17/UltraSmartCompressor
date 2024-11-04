@@ -12,9 +12,10 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk, simpledialog
 import threading
 import logging
-import time  # Added this import for time.sleep()
+import time  # Added for sleep and timing
 import zipfile
 import shutil
+import tarfile
 
 # Set up logging for debugging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -37,13 +38,22 @@ def install_package(python_exec, package, pip_name=None):
     except subprocess.CalledProcessError as e:
         sys.exit(1)
 
-# Function to check for the presence of PIL and install it if needed
+# Function to check for the presence of libraries and install if needed
 try:
     from PIL import Image, ImageTk  # For handling icons and better UI visuals
 except ImportError:
     # If ImportError occurs, install Pillow and retry
     install_package(python_exec, 'Pillow', 'Pillow')
     # Re-run the script with the virtual environment python to ensure Pillow is available
+    if python_exec != sys.executable:
+        os.execv(python_exec, [python_exec] + sys.argv)
+
+try:
+    import py7zr  # Added to handle 7z files
+except ImportError:
+    # If ImportError occurs, install py7zr and retry
+    install_package(python_exec, 'py7zr', 'py7zr')
+    # Re-run the script with the virtual environment python to ensure py7zr is available
     if python_exec != sys.executable:
         os.execv(python_exec, [python_exec] + sys.argv)
 
@@ -110,27 +120,7 @@ class SmartCompressApp:
             self.decompress_listbox.insert(tk.END, file)
 
     def extract_files(self):
-        files = filedialog.askopenfilenames(title="Select Files to Extract")
-        for file in files:
-            self.decompress_listbox.insert(tk.END, file)
-
-    def start_compression(self):
-        selected_files = [self.compress_listbox.get(i) for i in self.compress_listbox.curselection()]
-        if not selected_files:
-            messagebox.showwarning("No Files Selected", "Please select files to compress.")
-            return
-
-        # Compressing files into a zip archive
-        zip_filename = filedialog.asksaveasfilename(defaultextension=".zip", filetypes=[("Zip files", "*.zip")])
-        if not zip_filename:
-            return
-
-        with zipfile.ZipFile(zip_filename, 'w') as zipf:
-            for file in selected_files:
-                zipf.write(file, os.path.basename(file))
-                logging.info(f"Compressing file: {file}")
-        
-        messagebox.showinfo("Compression Complete", f"Files successfully compressed to: {zip_filename}")
+        self.start_extraction()
 
     def start_extraction(self):
         selected_files = [self.decompress_listbox.get(i) for i in self.decompress_listbox.curselection()]
@@ -147,17 +137,62 @@ class SmartCompressApp:
                 with zipfile.ZipFile(file, 'r') as zipf:
                     zipf.extractall(extract_folder)
                     logging.info(f"Extracting file: {file}")
+            elif tarfile.is_tarfile(file):
+                with tarfile.open(file, 'r:*') as tarf:
+                    tarf.extractall(path=extract_folder)
+                    logging.info(f"Extracting file: {file}")
+            elif file.endswith('.7z'):
+                with py7zr.SevenZipFile(file, 'r') as sevenz:
+                    sevenz.extractall(path=extract_folder)
+                    logging.info(f"Extracting file: {file}")
             else:
-                messagebox.showerror("Unsupported File", f"Cannot extract: {file}. Only ZIP files are supported.")
+                messagebox.showerror("Unsupported File", f"Cannot extract: {file}. Supported formats are zip, tar.gz, and 7z.")
 
         messagebox.showinfo("Extraction Complete", f"Files successfully extracted to: {extract_folder}")
+
+    def start_compression(self):
+        selected_files = [self.compress_listbox.get(i) for i in self.compress_listbox.curselection()]
+        if not selected_files:
+            messagebox.showwarning("No Files Selected", "Please select files to compress.")
+            return
+
+        # Ask the user for the desired compression format
+        compression_format = simpledialog.askstring("Select Format", "Enter compression format (zip, tar.gz, 7z):", parent=self.root)
+        if not compression_format:
+            return
+
+        # Get the destination for the compressed file
+        output_filename = filedialog.asksaveasfilename(defaultextension=f".{compression_format}", filetypes=[("All Files", "*.*")])
+        if not output_filename:
+            return
+
+        # Compress the selected files
+        if compression_format == 'zip':
+            with zipfile.ZipFile(output_filename, 'w') as zipf:
+                for file in selected_files:
+                    zipf.write(file, os.path.basename(file))
+                    logging.info(f"Compressing file: {file}")
+        elif compression_format == 'tar.gz':
+            with tarfile.open(output_filename, 'w:gz') as tarf:
+                for file in selected_files:
+                    tarf.add(file, arcname=os.path.basename(file))
+                    logging.info(f"Compressing file: {file}")
+        elif compression_format == '7z':
+            with py7zr.SevenZipFile(output_filename, 'w') as sevenz:
+                for file in selected_files:
+                    sevenz.write(file, arcname=os.path.basename(file))
+                    logging.info(f"Compressing file: {file}")
+        else:
+            messagebox.showerror("Unsupported Format", f"The format '{compression_format}' is not supported.")
+            return
+
+        messagebox.showinfo("Compression Complete", f"Files successfully compressed to: {output_filename}")
 
 # Main Application Runner
 if __name__ == "__main__":
     root = tk.Tk()
     app = SmartCompressApp(root)
     root.mainloop()
-
 
 ```
 
