@@ -5,6 +5,7 @@ UltraSmartCompressor is an advanced file compression tool using multiple algorit
 
 ```bash
 
+
 import os
 import sys
 import subprocess
@@ -40,31 +41,45 @@ def install_package(python_exec, package, pip_name=None):
 
 # Function to check for the presence of libraries and install if needed
 try:
-    from PIL import Image, ImageTk  # For handling icons and better UI visuals
+    from PIL import Image, ImageTk
 except ImportError:
     install_package(python_exec, 'Pillow', 'Pillow')
     if python_exec != sys.executable:
         os.execv(python_exec, [python_exec] + sys.argv)
 
 try:
-    import py7zr  # Added to handle 7z files
+    import py7zr
 except ImportError:
     install_package(python_exec, 'py7zr', 'py7zr')
     if python_exec != sys.executable:
         os.execv(python_exec, [python_exec] + sys.argv)
 
 try:
-    import pycdlib  # Added to handle ISO files
+    import pycdlib
 except ImportError:
     install_package(python_exec, 'pycdlib', 'pycdlib')
     if python_exec != sys.executable:
         os.execv(python_exec, [python_exec] + sys.argv)
 
+try:
+    import torch
+except ImportError:
+    install_package(python_exec, 'torch', 'torch')
+    if python_exec != sys.executable:
+        os.execv(python_exec, [python_exec] + sys.argv)
+
+# After installing, retry importing torch in case it wasn't done before
+try:
+    import torch
+except ImportError:
+    logging.error("Failed to import PyTorch. Ensure it is installed properly.")
+    sys.exit(1)
+
 # Tkinter App Class
 class SmartCompressApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("SmartCompressProUltimate")
+        self.root.title("SmartCompressProUltimate - AI Enhanced")
         self.root.geometry("1000x700")
         
         # Setting up the main frames
@@ -151,10 +166,10 @@ class SmartCompressApp:
                     iso.open(file)
                     os.makedirs(extract_folder, exist_ok=True)
                     logging.info(f"Extracting ISO: {file}")
-                    for root, dirs, files in iso.walk(iso_path='/'):
+                    for dir_path, dirs, files in iso.walk(iso_path='/'):
                         for file_name in files:
                             with open(os.path.join(extract_folder, file_name), 'wb') as out_file:
-                                iso.get_file_from_iso(os.path.join(root, file_name), out_file)
+                                iso.get_file_from_iso(os.path.join(dir_path, file_name), out_file)
                     iso.close()
                 else:
                     messagebox.showerror("Unsupported File", f"Cannot extract: {file}. Supported formats are zip, tar.gz, 7z, and iso.")
