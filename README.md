@@ -184,16 +184,17 @@ class SmartCompressApp:
             compressed_data = []
 
             for start in range(0, len(data), chunk_size):
-                chunk = data[start:start + chunk_size]
+                chunk = np.frombuffer(data[start:start + chunk_size], dtype=np.uint8).astype(np.float32) / 255.0
+
+                # Use PyTorch for tensor operations on the chunk
                 compressed_chunk = torch.tensor(chunk, dtype=torch.float32).to(device)
+                
+                # Compressing the chunk (note: replace this logic with your custom compression if needed)
+                compressed_data.append(compressed_chunk.cpu().numpy().tobytes())
 
-                # Basic transformation to "compress"
-                compressed_chunk = compressed_chunk / 255.0
-                compressed_data.append(compressed_chunk.cpu().numpy())
-
-            compressed_data = np.concatenate(compressed_data)
+            compressed_data_bytes = b"".join(compressed_data)
             logging.info("Chunk-based compression completed successfully.")
-            return compressed_data.tobytes()
+            return compressed_data_bytes
         except Exception as e:
             logging.error(f"Error during compression: {e}")
             return data
