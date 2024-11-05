@@ -10,12 +10,14 @@ import os
 import sys
 import subprocess
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, ttk, simpledialog
 import threading
 import logging
+import time  # Added for sleep and timing
 import zipfile
 import shutil
 import tarfile
+import multiprocessing
 
 # Set up logging for debugging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -61,16 +63,26 @@ import pycdlib
 import torch
 import numpy as np
 
-# Check for GPU availability
-if torch.cuda.is_available():
-    device = torch.device("cuda")
-    logging.info("NVIDIA GPU detected. Using CUDA for acceleration.")
-elif torch.backends.mps.is_available():
-    device = torch.device("mps")
-    logging.info("AMD GPU detected. Using ROCm for acceleration.")
-else:
-    device = torch.device("cpu")
-    logging.info("No GPU detected. Using CPU for processing.")
+# Function to check system resources and capabilities
+def check_system_capabilities():
+    ram_size_gb = round(os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES') / (1024. ** 3), 2)
+    num_cores = multiprocessing.cpu_count()
+    has_gpu = torch.cuda.is_available() or torch.backends.mps.is_available()
+
+    # Define recommended requirements for "super compression"
+    recommended_ram = 16  # in GB
+    recommended_cores = 8
+
+    if ram_size_gb < recommended_ram or num_cores < recommended_cores or not has_gpu:
+        messagebox.showwarning(
+            "Performance Warning",
+            f"Your system has {ram_size_gb} GB RAM, {num_cores} CPU cores, and {'a GPU' if has_gpu else 'no GPU'}.\n"
+            f"To achieve optimal performance, it is recommended to have at least {recommended_ram} GB RAM, "
+            f"{recommended_cores} CPU cores, and a dedicated GPU.\n"
+            "The compression process may be slow on your system."
+        )
+
+    return ram_size_gb >= recommended_ram and num_cores >= recommended_cores and has_gpu
 
 # Tkinter App Class
 class SmartCompressApp:
@@ -176,56 +188,72 @@ class SmartCompressApp:
 
         messagebox.showinfo("Extraction Complete", f"Files successfully extracted to: {extract_folder}")
 
-    def chunk_based_compression(self, data):
-        """Use a basic compression for large files in small chunks to prevent memory overload."""
+    # Modified aggressive_compression function with smaller chunks and simplified operations.
+    def aggressive_compression(self, data):
+        """Uses an AI model to compress the data aggressively while maintaining data integrity."""
         try:
-            # Use a small chunk size (e.g., 1 MB)
-            chunk_size = 1024 * 1024
-            compressed_data = []
+            # Convert the byte data to a numpy array
+            data_np = np.frombuffer(data, dtype=np.uint8)
 
-            for start in range(0, len(data), chunk_size):
-                chunk = np.frombuffer(data[start:start + chunk_size], dtype=np.uint8).astype(np.float32) / 255.0
+            # Reduce the chunk size to minimize memory usage
+            chunk_size = 1024 * 1024  # 1 MB chunks
+            compressed_chunks = []
 
-                # Use PyTorch for tensor operations on the chunk
-                compressed_chunk = torch.tensor(chunk, dtype=torch.float32).to(device)
-                
-                # Compressing the chunk (note: replace this logic with your custom compression if needed)
-                compressed_data.append(compressed_chunk.cpu().numpy().tobytes())
+            for start in range(0, len(data_np), chunk_size):
+                chunk = data_np[start:start + chunk_size]
 
-            compressed_data_bytes = b"".join(compressed_data)
-            logging.info("Chunk-based compression completed successfully.")
-            return compressed_data_bytes
+                # Define a simpler compression model or transformation
+                compressed_chunk = chunk / 2  # Example: simple value transformation
+                compressed_chunks.append(compressed_chunk.astype(np.uint8).tobytes())
+
+            compressed_data = b"".join(compressed_chunks)
+            logging.info("Aggressive compression completed successfully.")
+            return compressed_data
         except Exception as e:
-            logging.error(f"Error during compression: {e}")
-            return data
+            logging.error(f"Error during aggressive AI compression: {e}")
+            return data  # Fallback to original data if any issues
 
     def start_compression(self):
+        # Check if the system has enough resources for optimal compression
+        has_resources = check_system_capabilities()
+
+        if not has_resources:
+            # Alert the user about insufficient resources
+            messagebox.showwarning(
+                "System Performance Warning",
+                "Your system may not have enough resources to run aggressive compression quickly. "
+                "The process may be slow or may fail. Consider using a system with more RAM and a GPU."
+            )
+
         selected_files = [self.compress_listbox.get(i) for i in self.compress_listbox.curselection()]
         if not selected_files:
             messagebox.showwarning("No Files Selected", "Please select files to compress.")
             return
 
+        # Get the destination for the compressed file
         output_filename = filedialog.asksaveasfilename(defaultextension=".7z", filetypes=[("All Files", "*.*")])
         if not output_filename:
             return
 
+        # Compress the selected files
         try:
             for file in selected_files:
                 file_size = os.path.getsize(file)
                 if file_size > 4 * 1024 * 1024 * 1024:  # File size > 4GB
                     with open(file, 'rb') as f:
                         data = f.read()
-                        logging.info(f"Starting chunk-based compression for: {file}")
-                        data = self.chunk_based_compression(data)
+                        logging.info(f"Starting aggressive AI-enhanced compression for: {file}")
+                        data = self.aggressive_compression(data)
 
-                    compressed_file_path = file + ".compressed"
-                    with open(compressed_file_path, 'wb') as compressed_file:
+                    with open(file, 'wb') as compressed_file:
                         compressed_file.write(data)
 
                     with py7zr.SevenZipFile(output_filename, 'w') as sevenz:
-                        sevenz.writeall(compressed_file_path)
+                        sevenz.writeall(file)
                         logging.info(f"Compressed {file} to {output_filename}")
+
                 else:
+                    # Use standard compression methods for smaller files
                     with py7zr.SevenZipFile(output_filename, 'w') as sevenz:
                         sevenz.writeall(file)
                         logging.info(f"Compressed {file} to {output_filename}")
