@@ -289,10 +289,29 @@ Run the UltraSmartCompressor.py script and follow the GUI to select files for co
 
 ### Key Features
 
-- **Multiple Algorithms**: Utilizes Brotli, Zstandard, LZMA, and more to optimize compression.
-- **Real-Time Progress Tracking**: Displays progress and estimated time remaining.
-- **Adaptive Compression**: Dynamically adjusts chunk size based on file type and entropy.
-- **High Compression Ratios**: Achieves a 10-60% reduction in file sizes.
+- **Automatic Dependency Installation**: The program automatically installs any required packages if they are missing, including numpy, torch, py7zr, pycdlib, and Pillow. This ensures users don't need to manually install these packages.
+
+- **Virtual Environment Setup**: The program creates a virtual environment to manage dependencies, preventing any conflict with other packages on the user's system.
+
+- **System Capability Check**: Before starting the compression process, the program checks system resources like RAM, CPU cores, and GPU availability. If the system does not meet recommended resources, a warning is displayed to the user. This is helpful to ensure smooth operation, particularly for aggressive AI-enhanced compression.
+
+- **Aggressive AI Compression Mode**: Uses an AI model with simplified operations to compress files more efficiently if the system has enough resources. It also includes a fallback simplified transformation if the system capabilities are lower.
+
+- **Tkinter-Based GUI**: The program provides a user-friendly interface for both compression and extraction operations. Users can add files, compress them, or extract from compressed files with easy button clicks.
+
+- **Support for Various File Types**: The program supports compressing .zip, .tar, .7z, and .iso formats, making it versatile for users dealing with different compressed file types.
+
+- **Warnings for Slow Systems**: The program warns users if their system may take longer due to limited resources, which helps set expectations about performance and allows them to decide whether to continue.
+
+### Notes:
+- **Dependencies Are Handled Automatically**: There is no need for the user to manually install any packages; the program will take care of it.
+
+- **System Requirements**: The program performs best with at least 16GB of RAM, 8 CPU cores, and a GPU. If the user's system doesn’t meet these requirements, the aggressive compression feature might be slower, and they will be notified.
+
+ 
+- **Different Compression Levels**: Depending on their system capabilities, the program can either perform standard compression or an aggressive AI-based compression, optimizing efficiency based on available resources.
+  
+- **Friendly User Interface**: The program is designed with ease of use in mind, using a graphical interface that allows users to select files for compression or extraction, add files, and configure output options without needing to use the command line.
 
 # License
 
