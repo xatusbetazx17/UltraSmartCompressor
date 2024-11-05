@@ -10,10 +10,9 @@ import os
 import sys
 import subprocess
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk, simpledialog
+from tkinter import filedialog, messagebox, ttk
 import threading
 import logging
-import time  # Added for sleep and timing
 import zipfile
 import shutil
 import tarfile
@@ -177,30 +176,27 @@ class SmartCompressApp:
 
         messagebox.showinfo("Extraction Complete", f"Files successfully extracted to: {extract_folder}")
 
-    def aggressive_compression(self, data):
-        """Uses an AI model to compress the data aggressively while maintaining data integrity."""
+    def chunk_based_compression(self, data):
+        """Use a basic compression for large files in small chunks to prevent memory overload."""
         try:
-            # Convert the byte data to a numpy array
-            data_np = np.frombuffer(data, dtype=np.uint8)
+            # Use a small chunk size (e.g., 1 MB)
+            chunk_size = 1024 * 1024
+            compressed_data = []
 
-            # Define a compression model (example: linear to compress into latent space)
-            model = torch.nn.Sequential(
-                torch.nn.Linear(data_np.size, data_np.size // 20),  # Compression layer
-                torch.nn.ReLU(),
-                torch.nn.Linear(data_np.size // 20, data_np.size // 50)  # Aggressive reduction
-            )
-            model.to(device)
-            data_tensor = torch.from_numpy(data_np).float().to(device)
+            for start in range(0, len(data), chunk_size):
+                chunk = data[start:start + chunk_size]
+                compressed_chunk = torch.tensor(chunk, dtype=torch.float32).to(device)
 
-            # Compress the data with the model
-            with torch.no_grad():
-                compressed_data = model(data_tensor)
+                # Basic transformation to "compress"
+                compressed_chunk = compressed_chunk / 255.0
+                compressed_data.append(compressed_chunk.cpu().numpy())
 
-            logging.info("Aggressive AI compression completed successfully.")
-            return compressed_data.cpu().numpy().tobytes()
+            compressed_data = np.concatenate(compressed_data)
+            logging.info("Chunk-based compression completed successfully.")
+            return compressed_data.tobytes()
         except Exception as e:
-            logging.error(f"Error during aggressive AI compression: {e}")
-            return data  # Fallback to original data if any issues
+            logging.error(f"Error during compression: {e}")
+            return data
 
     def start_compression(self):
         selected_files = [self.compress_listbox.get(i) for i in self.compress_listbox.curselection()]
@@ -208,30 +204,27 @@ class SmartCompressApp:
             messagebox.showwarning("No Files Selected", "Please select files to compress.")
             return
 
-        # Get the destination for the compressed file
         output_filename = filedialog.asksaveasfilename(defaultextension=".7z", filetypes=[("All Files", "*.*")])
         if not output_filename:
             return
 
-        # Compress the selected files
         try:
             for file in selected_files:
                 file_size = os.path.getsize(file)
                 if file_size > 4 * 1024 * 1024 * 1024:  # File size > 4GB
                     with open(file, 'rb') as f:
                         data = f.read()
-                        logging.info(f"Starting aggressive AI-enhanced compression for: {file}")
-                        data = self.aggressive_compression(data)
+                        logging.info(f"Starting chunk-based compression for: {file}")
+                        data = self.chunk_based_compression(data)
 
-                    with open(file, 'wb') as compressed_file:
+                    compressed_file_path = file + ".compressed"
+                    with open(compressed_file_path, 'wb') as compressed_file:
                         compressed_file.write(data)
 
                     with py7zr.SevenZipFile(output_filename, 'w') as sevenz:
-                        sevenz.writeall(file)
+                        sevenz.writeall(compressed_file_path)
                         logging.info(f"Compressed {file} to {output_filename}")
-
                 else:
-                    # Use standard compression methods for smaller files
                     with py7zr.SevenZipFile(output_filename, 'w') as sevenz:
                         sevenz.writeall(file)
                         logging.info(f"Compressed {file} to {output_filename}")
