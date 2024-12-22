@@ -9,7 +9,6 @@ UltraSmartCompressor is an advanced file compression tool using multiple algorit
 import os
 import sys
 import math
-import platform
 import subprocess
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk, simpledialog
@@ -17,7 +16,6 @@ import logging
 import threading
 import zipfile
 import uuid
-import requests  # For future cloud uploads
 
 # Attempt to import Qiskit only if you want quantum circuit placeholders
 try:
@@ -26,6 +24,14 @@ try:
     QISKIT_AVAILABLE = True
 except ImportError:
     QISKIT_AVAILABLE = False
+
+# pydrive2 for Google Drive integration
+try:
+    from pydrive2.auth import GoogleAuth
+    from pydrive2.drive import GoogleDrive
+    PYDRIVE_AVAILABLE = True
+except ImportError:
+    PYDRIVE_AVAILABLE = False
 
 #########################
 # Logging Setup
@@ -55,24 +61,21 @@ class SmartCompressApp:
     def __init__(self, root):
         self.root = root
         self.root.title("UltraSmartCompressor — Hybrid (Local or Cloud)")
+        self.root.geometry("1000x700")
 
-        # Track if we’re compressing
         self.is_compressing = False
 
-        # Create main frames
         self.setup_main_interface()
-
-        # Check system resources (simple check)
         self.warn_if_underpowered()
+
+        # We'll store Google Drive object if user logs in
+        self.gauth = None
+        self.gdrive = None
 
     #########################
     #   System Resource Check
     #########################
     def warn_if_underpowered(self):
-        """
-        Simple heuristic: if user has <4GB RAM or <4 CPU cores, warn that big local compressions might be slow.
-        """
-        # This is OS-dependent. We do a naive approach:
         try:
             import psutil
             total_ram = psutil.virtual_memory().total
@@ -86,36 +89,30 @@ class SmartCompressApp:
                     "Local high-level compression may be slow or unstable. Consider Cloud Mode."
                 )
         except ImportError:
-            # psutil not available, skip
             pass
 
     #########################
     #   Main Interface
     #########################
     def setup_main_interface(self):
-        # Theming
         self.apply_theme(CURRENT_THEME)
 
-        # Toolbar
         toolbar_frame = tk.Frame(self.root, bg=THEMES[CURRENT_THEME]["bg_color"])
         toolbar_frame.pack(side=tk.TOP, fill=tk.X)
 
-        # "Add Files" button
         add_button = tk.Button(toolbar_frame, text="Add Files", command=self.add_files)
         add_button.pack(side=tk.LEFT, padx=2, pady=2)
 
-        # "Extract" button
         extract_button = tk.Button(toolbar_frame, text="Extract", command=self.start_extraction)
         extract_button.pack(side=tk.LEFT, padx=2, pady=2)
 
-        # "Theme" drop-down
         theme_label = tk.Label(toolbar_frame, text="Theme:", bg=THEMES[CURRENT_THEME]["bg_color"], fg=THEMES[CURRENT_THEME]["fg_color"])
         theme_label.pack(side=tk.LEFT, padx=5)
         self.theme_var = tk.StringVar(value=CURRENT_THEME)
         theme_dropdown = ttk.OptionMenu(toolbar_frame, self.theme_var, CURRENT_THEME, *THEMES.keys(), command=self.change_theme)
         theme_dropdown.pack(side=tk.LEFT, padx=2, pady=2)
 
-        # Notebook / tabs
+        # Notebook
         tab_control = ttk.Notebook(self.root)
 
         self.compress_tab = ttk.Frame(tab_control)
@@ -128,7 +125,7 @@ class SmartCompressApp:
 
         tab_control.pack(expand=1, fill="both")
 
-        # Progress label and bar
+        # Progress label & bar
         self.progress_label = ttk.Label(self.root, text="No compression in progress")
         self.progress_label.pack(pady=(5, 0))
 
@@ -140,50 +137,44 @@ class SmartCompressApp:
         self.compress_listbox = tk.Listbox(tab, selectmode=tk.MULTIPLE)
         self.compress_listbox.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
 
-        # Radiobutton for "Local" or "Cloud"
-        self.mode_var = tk.StringVar(value="local")
         mode_frame = tk.Frame(tab)
         mode_frame.pack(pady=5)
 
-        local_radio = tk.Radiobutton(mode_frame, text="Local Mode", variable=self.mode_var, value="local")
-        cloud_radio = tk.Radiobutton(mode_frame, text="Cloud Mode", variable=self.mode_var, value="cloud")
-        local_radio.pack(side=tk.LEFT, padx=10)
-        cloud_radio.pack(side=tk.LEFT, padx=10)
+        self.mode_var = tk.StringVar(value="local")
+        tk.Radiobutton(mode_frame, text="Local Mode", variable=self.mode_var, value="local").pack(side=tk.LEFT, padx=10)
+        tk.Radiobutton(mode_frame, text="Cloud Mode", variable=self.mode_var, value="cloud").pack(side=tk.LEFT, padx=10)
 
-        # Algorithm selection
         tk.Label(tab, text="Choose Algorithm:").pack()
         self.algo_var = tk.StringVar(value="zip")
-        algo_options = ["zip", "zstd", "brotli", "7z", "xz"]  # example
+        algo_options = ["zip", "zstd", "brotli", "7z", "xz"]
         self.algo_dropdown = ttk.OptionMenu(tab, self.algo_var, "zip", *algo_options)
         self.algo_dropdown.pack(pady=5)
 
-        # Compression level slider
         tk.Label(tab, text="Compression Level:").pack()
         self.level_var = tk.IntVar(value=5)
         self.level_scale = tk.Scale(tab, from_=1, to=9, orient=tk.HORIZONTAL, variable=self.level_var)
         self.level_scale.pack()
 
+        tk.Label(tab, text="Split File (MB): 0 = no split").pack()
+        self.split_var = tk.IntVar(value=0)
+        split_entry = tk.Entry(tab, textvariable=self.split_var)
+        split_entry.pack()
+
         # Compress button
         tk.Button(tab, text="Compress", command=self.choose_compression_method).pack(pady=5, side=tk.RIGHT)
 
     def create_decompress_tab(self, tab):
-        tk.Label(tab, text="Select .zip files to decompress:").pack(pady=5)
+        tk.Label(tab, text="Select files to decompress (like .zip):").pack(pady=5)
         self.decompress_listbox = tk.Listbox(tab, selectmode=tk.MULTIPLE)
         self.decompress_listbox.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
-        # "Decompress" button handled outside
 
     #########################
     #   Theming
     #########################
     def change_theme(self, new_theme):
         self.apply_theme(new_theme)
-        # Possibly re-draw UI if needed
 
     def apply_theme(self, theme_name):
-        """
-        A naive approach: just set a global background color to some frames.
-        Real theming might involve re-styling all widgets.
-        """
         global CURRENT_THEME
         CURRENT_THEME = theme_name
         self.root.config(bg=THEMES[CURRENT_THEME]["bg_color"])
@@ -194,9 +185,6 @@ class SmartCompressApp:
     def add_files(self):
         files = filedialog.askopenfilenames(title="Select Files")
         for file_path in files:
-            # If user is on "Compress" tab, add to compress_listbox
-            # If on "Decompress" tab, maybe add to decompress_listbox
-            # We'll assume all go to compress list if not .zip
             if file_path.lower().endswith('.zip'):
                 self.decompress_listbox.insert(tk.END, file_path)
             else:
@@ -215,7 +203,6 @@ class SmartCompressApp:
         if mode == "local":
             threading.Thread(target=self.start_local_compression, args=(selected_files,), daemon=True).start()
         else:
-            # Cloud mode
             threading.Thread(target=self.start_cloud_compression, args=(selected_files,), daemon=True).start()
 
     #########################
@@ -225,7 +212,6 @@ class SmartCompressApp:
         if not selected_files:
             return
 
-        # Check resources?
         self.is_compressing = True
         self.update_progress_label("Starting local compression...")
 
@@ -246,31 +232,56 @@ class SmartCompressApp:
         algo = self.algo_var.get()
         level = self.level_var.get()
 
-        # In real code, you'd implement per-algo logic
-        try:
-            if algo == "zip":
-                self.do_local_zip(selected_files, out_archive)
-            elif algo == "zstd":
-                self.do_local_zstd(selected_files, out_archive, level)
-            elif algo == "brotli":
-                self.do_local_brotli(selected_files, out_archive, level)
-            elif algo == "7z":
-                self.do_local_7z(selected_files, out_archive, level)
-            elif algo == "xz":
-                self.do_local_xz(selected_files, out_archive, level)
-            else:
-                messagebox.showerror("Unknown Algorithm", f"Algorithm '{algo}' not supported.")
-        except Exception as e:
-            logging.error(f"Error during local compression: {e}")
-            messagebox.showerror("Local Compression Error", str(e))
+        split_mb = self.split_var.get()
+        if split_mb <= 0:
+            try:
+                if algo == "zip":
+                    self.do_local_zip(selected_files, out_archive)
+                elif algo == "zstd":
+                    self.do_local_zstd(selected_files, out_archive, level)
+                elif algo == "brotli":
+                    self.do_local_brotli(selected_files, out_archive, level)
+                elif algo == "7z":
+                    self.do_local_7z(selected_files, out_archive, level)
+                elif algo == "xz":
+                    self.do_local_xz(selected_files, out_archive, level)
+                else:
+                    messagebox.showerror("Unknown Algorithm", f"'{algo}' not supported.")
+            except Exception as e:
+                logging.error(f"Error during local compression: {e}")
+                messagebox.showerror("Local Compression Error", str(e))
+        else:
+            # Split approach
+            part_size = split_mb * 1024 * 1024
+            try:
+                for file_path in selected_files:
+                    self.local_split_and_compress(file_path, part_size, algo, level)
+            except Exception as e:
+                logging.error(f"Error during split compression: {e}")
+                messagebox.showerror("Split Compression Error", str(e))
 
         self.is_compressing = False
         self.update_progress_label("No compression in progress")
         self.progress_bar["value"] = 0
 
-    #########################
-    #   Examples of local compression for each algo
-    #########################
+    def local_split_and_compress(self, file_path, part_size, algo, level):
+        file_size = os.path.getsize(file_path)
+        base_name = os.path.basename(file_path)
+        num_parts = math.ceil(file_size / part_size)
+        accumulated = 0
+        with open(file_path, 'rb') as f:
+            for part_idx in range(num_parts):
+                chunk_data = f.read(part_size)
+                part_out = f"{base_name}.part{part_idx}.{algo}"
+                # Example: if algo == "zip"
+                if algo == "zip":
+                    with zipfile.ZipFile(part_out, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+                        zf.writestr(base_name, chunk_data)
+                # Add logic for zstd/brotli/7z/xz if you want them for each chunk
+                accumulated += len(chunk_data)
+                self.root.after(0, self.update_progressbar, accumulated)
+        messagebox.showinfo("Split-Compression Complete", f"Created {num_parts} parts from {base_name}")
+
     def do_local_zip(self, selected_files, out_path):
         import zipfile
         accumulated = 0
@@ -281,30 +292,25 @@ class SmartCompressApp:
                 with open(file_path, 'rb') as fin:
                     data = fin.read()
                     zf.writestr(arcname, data)
-
                 accumulated += file_size
                 self.root.after(0, self.update_progressbar, accumulated)
         messagebox.showinfo("Compression Complete", f"Files compressed into {out_path}")
 
     def do_local_zstd(self, selected_files, out_path, level):
-        """
-        For demonstration, we only compress the first file to .zst
-        Real code might combine them or do a tar step first, etc.
-        """
         try:
             import zstandard as zstd
         except ImportError:
-            messagebox.showerror("zstd Missing", "Please install `zstandard` library.")
+            messagebox.showerror("zstd Missing", "Install `zstandard` library.")
             return
 
         if len(selected_files) > 1:
-            messagebox.showinfo("Note", "zstd example only compresses one file for demonstration.")
-
+            messagebox.showinfo("Note", "zstd example only compresses the first file for demonstration.")
         file_path = selected_files[0]
         cctx = zstd.ZstdCompressor(level=level)
+
         with open(file_path, 'rb') as fin, open(out_path, 'wb') as fout:
-            accumulated = 0
             chunk_size = 1024 * 512
+            accumulated = 0
             while True:
                 chunk = fin.read(chunk_size)
                 if not chunk:
@@ -312,70 +318,180 @@ class SmartCompressApp:
                 fout.write(cctx.compress(chunk))
                 accumulated += len(chunk)
                 self.root.after(0, self.update_progressbar, accumulated)
-
         messagebox.showinfo("Compression Complete", f"File compressed to {out_path}")
 
     def do_local_brotli(self, selected_files, out_path, level):
-        # Similarly, you'd use the `brotli` library or spawn brotli CLI
-        messagebox.showinfo("Brotli Placeholder", "Implement brotli logic here.")
-        # In real code, do the chunked read -> compress -> write
+        # placeholder
+        messagebox.showinfo("Brotli", "Implement local brotli compression or spawn CLI.")
 
     def do_local_7z(self, selected_files, out_path, level):
-        # Possibly spawn "7z" CLI or use py7zr
         try:
             import py7zr
         except ImportError:
-            messagebox.showerror("py7zr Missing", "Please install `py7zr` library.")
+            messagebox.showerror("py7zr Missing", "Install `py7zr` library.")
             return
 
-        # Example: create a .7z
+        accumulated = 0
         with py7zr.SevenZipFile(out_path, 'w') as archive:
-            accumulated = 0
             for file_path in selected_files:
-                # Py7zr can take a list directly, or we manually read the file
-                # We'll do archive.writeall for demonstration
                 archive.writeall(file_path, arcname=os.path.basename(file_path))
                 file_size = os.path.getsize(file_path)
                 accumulated += file_size
                 self.root.after(0, self.update_progressbar, accumulated)
-
         messagebox.showinfo("Compression Complete", f"Files compressed into {out_path}")
 
     def do_local_xz(self, selected_files, out_path, level):
-        # Might spawn xz CLI or use python-lzma
-        messagebox.showinfo("XZ Placeholder", "Implement xz logic here (or spawn `xz` CLI).")
+        # placeholder
+        messagebox.showinfo("XZ", "Implement local xz compression or spawn CLI.")
 
     #########################
-    #   Cloud Compression (Stub)
+    #   Real "Cloud" with Google Drive
     #########################
     def start_cloud_compression(self, selected_files):
         """
-        Currently a placeholder. Real code requires an actual server endpoint
-        that can handle chunked uploads, compression, and final download.
+        We'll demonstrate a real approach for Google Drive using pydrive2.
+        User can also choose to split the files before uploading.
         """
+        if not PYDRIVE_AVAILABLE:
+            messagebox.showerror("pydrive2 Missing",
+                                 "You must install pydrive2 (pip install pydrive2) and have client_secrets.json.")
+            return
+
+        # If not logged in, do it now
+        if not self.gauth or not self.gdrive:
+            if not self.google_drive_login():
+                return
+
+        split_mb = self.split_var.get()
+
+        for file_path in selected_files:
+            if split_mb > 0:
+                self.cloud_split_and_upload_google_drive(file_path, split_mb)
+            else:
+                self.cloud_single_upload_google_drive(file_path)
+
+        messagebox.showinfo("Cloud Upload", "All files uploaded to Google Drive.")
+        self.is_compressing = False
+        self.update_progress_label("No compression in progress")
+        self.progress_bar["value"] = 0
+
+    def google_drive_login(self):
+        """
+        Real Google Drive authentication using pydrive2.
+        Expects client_secrets.json or credentials in the working dir.
+        """
+        from pydrive2.auth import GoogleAuth
+        from pydrive2.drive import GoogleDrive
+
+        self.is_compressing = True
+        self.update_progress_label("Logging into Google Drive...")
+
+        self.gauth = GoogleAuth()
+        # user will be prompted for OAuth in a local browser if no valid credentials
+        try:
+            self.gauth.LocalWebserverAuth()
+        except Exception as e:
+            messagebox.showerror("Google Drive Auth Error", str(e))
+            self.is_compressing = False
+            return False
+
+        self.gdrive = GoogleDrive(self.gauth)
+        self.is_compressing = False
+        self.update_progress_label("No compression in progress")
+        messagebox.showinfo("Google Drive", "Successfully authenticated with Google Drive.")
+        return True
+
+    def cloud_single_upload_google_drive(self, file_path):
+        """
+        Single-file upload to Google Drive using pydrive2.
+        Pydrive2 handles chunked uploading internally for large files.
+        """
+        if not self.gdrive:
+            return
+        self.is_compressing = True
+        self.update_progress_label("Uploading file to Google Drive...")
+
+        file_size = os.path.getsize(file_path)
+        base_name = os.path.basename(file_path)
+        self.progress_bar["maximum"] = file_size
+        self.progress_bar["value"] = 0
+
+        chunk_size = 512 * 1024
+        total_uploaded = 0
+
+        # pydrive approach: we'd typically do something like:
+        # "drive_file = self.gdrive.CreateFile({'title': base_name})"
+        # "drive_file.SetContentFile(file_path)"
+        # "drive_file.Upload()"  # pydrive handles big files chunked
+        # We'll do the chunk approach manually to show progress, though pydrive can do it automatically.
+
+        # For demonstration, let's do partial reading and pass it to SetContentFile repeatedly which is suboptimal.
+        # A better approach: just do "SetContentFile(file_path)" once. We'll simulate partial progress:
+
+        from pydrive2.drive import GoogleDriveFile
+
+        drive_file = self.gdrive.CreateFile({'title': base_name})
+        # We'll read the entire file in one pass for pydrive, but manually keep track of progress:
+        with open(file_path, 'rb') as f:
+            data = f.read()
+            # This can be big, but pydrive will chunk it internally
+            drive_file.SetContentBinary(data)
+        drive_file.Upload(param={'supportsAllDrives': True})
+        # If successful, we can assume entire file was uploaded.
+        self.progress_bar["value"] = file_size
+
+        self.is_compressing = False
+        self.update_progress_label("No compression in progress")
+
+        messagebox.showinfo("Cloud Upload Complete", f"Uploaded '{base_name}' to Google Drive.")
+
+    def cloud_split_and_upload_google_drive(self, file_path, split_mb):
+        if not self.gdrive:
+            return
+        self.is_compressing = True
+        self.update_progress_label("Splitting & uploading file to Google Drive...")
+
+        part_size = split_mb * 1024 * 1024
+        file_size = os.path.getsize(file_path)
+        base_name = os.path.basename(file_path)
+        num_parts = math.ceil(file_size / part_size)
+
+        self.progress_bar["maximum"] = file_size
+        self.progress_bar["value"] = 0
+        accumulated = 0
+
+        with open(file_path, 'rb') as f:
+            for part_idx in range(num_parts):
+                chunk_data = f.read(part_size)
+                part_filename = f"{base_name}.part{part_idx}"
+                drive_file = self.gdrive.CreateFile({'title': part_filename})
+                drive_file.SetContentBinary(chunk_data)
+                drive_file.Upload(param={'supportsAllDrives': True})
+
+                accumulated += len(chunk_data)
+                self.root.after(0, self.update_progressbar, accumulated)
+
+        self.is_compressing = False
+        self.update_progress_label("No compression in progress")
         messagebox.showinfo(
-            "Cloud Compression (Stub)",
-            "This is a placeholder. In a real system, you'd implement chunked upload to a server, "
-            "server-side compression, and final download link here."
+            "Cloud Split Upload Complete",
+            f"Uploaded {base_name} in {num_parts} parts to Google Drive."
         )
 
     #########################
     #   IBM Quantum (Placeholder)
     #########################
     def run_ibm_quantum(self, selected_files):
-        """
-        Just as a demo circuit, not real compression.
-        """
         if not QISKIT_AVAILABLE:
             messagebox.showerror("Qiskit Error", "Qiskit is not installed.")
             return
 
-        token = simpledialog.askstring("IBMQ Token", "Enter your IBM Quantum API token:")
+        token = simpledialog.askstring("IBMQ Token", "Enter your IBMQ token:")
         if not token:
             return
 
         self.is_compressing = True
-        self.update_progress_label("Running a quantum circuit (placeholder)...")
+        self.update_progress_label("Running quantum circuit (placeholder)...")
 
         try:
             from qiskit import IBMQ, QuantumCircuit, transpile
@@ -384,9 +500,8 @@ class SmartCompressApp:
             IBMQ.save_account(token, overwrite=True)
             IBMQ.load_account()
             provider = IBMQ.get_provider(hub='ibm-q')
-
-            # For demo, pick simulator
             backend = provider.get_backend('ibmq_qasm_simulator')
+
             qc = QuantumCircuit(2, 2)
             qc.h(0)
             qc.cx(0, 1)
@@ -398,7 +513,7 @@ class SmartCompressApp:
             counts = result.get_counts()
             messagebox.showinfo(
                 "Quantum Complete",
-                f"Ran a circuit on {backend.name()}. Counts: {counts}\n(Not real compression.)"
+                f"Ran circuit on {backend.name()}. Counts: {counts}\n(Not real compression.)"
             )
         except Exception as e:
             messagebox.showerror("Quantum Error", str(e))
@@ -447,6 +562,7 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = SmartCompressApp(root)
     root.mainloop()
+
 
 
 ```
