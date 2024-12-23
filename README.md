@@ -38,11 +38,9 @@ except ImportError:
 #########################
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-
 #########################
 #   THEMING / SKINS
 #########################
-# We add more themes, plus a placeholder "CustomImage" for a user-chosen background
 THEMES = {
     "Default": {
         "bg_color": "#f0f0f0",
@@ -55,7 +53,7 @@ THEMES = {
         "progress_bg": "#555555"
     },
     "Rainbow": {
-        "bg_color": "#ffb3ba",  # Just an example color
+        "bg_color": "#ffb3ba",
         "fg_color": "#004d00",
         "progress_bg": "#ffffba"
     },
@@ -65,7 +63,6 @@ THEMES = {
         "progress_bg": "#ffffff"
     },
     "CustomImage": {
-        # We'll store placeholders. We'll handle images separately
         "bg_color": None,
         "fg_color": "#ffffff",
         "progress_bg": "#ffffff"
@@ -81,12 +78,11 @@ class SmartCompressApp:
         self.root.geometry("1000x700")
 
         self.is_compressing = False
-        # Google Drive references
         self.gauth = None
         self.gdrive = None
 
         # For custom background image
-        self.bg_image = None  # Will store a PhotoImage if the user picks one
+        self.bg_image = None
 
         self.setup_main_interface()
         self.warn_if_underpowered()
@@ -100,7 +96,6 @@ class SmartCompressApp:
             total_ram = psutil.virtual_memory().total
             ram_gb = total_ram / (1024**3)
             cpu_count = psutil.cpu_count(logical=True)
-
             if ram_gb < 4 or cpu_count < 4:
                 messagebox.showwarning(
                     "Low System Resources",
@@ -125,22 +120,28 @@ class SmartCompressApp:
         extract_button = tk.Button(toolbar_frame, text="Extract", command=self.start_extraction)
         extract_button.pack(side=tk.LEFT, padx=2, pady=2)
 
-        # Button for choosing a custom background image
         image_button = tk.Button(toolbar_frame, text="Custom BG Image", command=self.choose_bg_image)
         image_button.pack(side=tk.LEFT, padx=2, pady=2)
 
         theme_label = tk.Label(
-            toolbar_frame, 
-            text="Theme:", 
-            bg=THEMES[CURRENT_THEME]["bg_color"], 
+            toolbar_frame,
+            text="Theme:",
+            bg=THEMES[CURRENT_THEME]["bg_color"],
             fg=THEMES[CURRENT_THEME]["fg_color"]
         )
         theme_label.pack(side=tk.LEFT, padx=5)
+
         self.theme_var = tk.StringVar(value=CURRENT_THEME)
-        theme_dropdown = ttk.OptionMenu(toolbar_frame, self.theme_var, CURRENT_THEME, *THEMES.keys(), command=self.change_theme)
+        theme_dropdown = ttk.OptionMenu(
+            toolbar_frame,
+            self.theme_var,
+            CURRENT_THEME,
+            *THEMES.keys(),
+            command=self.change_theme
+        )
         theme_dropdown.pack(side=tk.LEFT, padx=2, pady=2)
 
-        # Notebook
+        # Notebook setup
         tab_control = ttk.Notebook(self.root)
 
         self.compress_tab = ttk.Frame(tab_control)
@@ -205,51 +206,45 @@ class SmartCompressApp:
     #########################
     def change_theme(self, new_theme):
         self.apply_theme(new_theme)
-        # If new_theme is "CustomImage", we rely on user to choose an image
 
     def apply_theme(self, theme_name):
         global CURRENT_THEME
         CURRENT_THEME = theme_name
 
-        # If user picks "CustomImage" theme but hasn't chosen an image, skip color changes
         if theme_name == "CustomImage" and not self.bg_image:
-            # fallback to Default or a base color
             self.root.config(bg="#f0f0f0")
         elif theme_name == "CustomImage" and self.bg_image:
-            # We'll set the background label to the chosen image if we have one
-            # We do not set a single color here
+            # We'll rely on the background label
             pass
         else:
-            # Normal color-based theme
             theme_data = THEMES[theme_name]
             self.root.config(bg=theme_data["bg_color"])
 
     def choose_bg_image(self):
         """
-        Let user pick an image file to set as the background if theme=CustomImage
-        We rely on Pillow (PIL) or built-in if we want. 
-        For simplicity, let's assume .gif or .png so we can do a PhotoImage in tkinter.
+        Let user pick an image file to set as the background if theme=CustomImage.
+        Then lower the image label so the UI stays on top.
         """
-        img_path = filedialog.askopenfilename(title="Choose a background image",
-                                              filetypes=[("Image Files", "*.png *.gif *.jpg *.jpeg")])
+        img_path = filedialog.askopenfilename(
+            title="Choose a background image",
+            filetypes=[("Image Files", "*.png *.gif *.jpg *.jpeg")]
+        )
         if not img_path:
             return
         try:
-            # We'll do a naive approach with tkinter.PhotoImage (which best supports GIF/PNG)
-            # For JPG, we might need Pillow. 
-            # If you want to support all formats, you'd do from PIL import Image, ImageTk
             ext = os.path.splitext(img_path)[1].lower()
             if ext in [".png", ".gif"]:
                 self.bg_image = tk.PhotoImage(file=img_path)
             else:
-                # If it's .jpg or others, fallback to PIL
                 from PIL import Image, ImageTk
                 pil_image = Image.open(img_path)
                 self.bg_image = ImageTk.PhotoImage(pil_image)
 
-            # We'll create a label to show this image behind everything
             bg_label = tk.Label(self.root, image=self.bg_image)
             bg_label.place(x=0, y=0, relwidth=1, relheight=1)
+
+            # Move the background label behind all other widgets, so the UI remains accessible
+            bg_label.lower()
 
             # Also set theme to custom
             self.theme_var.set("CustomImage")
@@ -264,6 +259,8 @@ class SmartCompressApp:
     def add_files(self):
         files = filedialog.askopenfilenames(title="Select Files")
         for file_path in files:
+            # Just an example: .zip => decompress, others => compress
+            # You can adjust as needed if you support more types
             if file_path.lower().endswith('.zip'):
                 self.decompress_listbox.insert(tk.END, file_path)
             else:
@@ -285,7 +282,7 @@ class SmartCompressApp:
             threading.Thread(target=self.start_cloud_compression, args=(selected_files,), daemon=True).start()
 
     #########################
-    #   Local Multi-Algorithm (Now With Optional AI)
+    #   Local Multi-Algorithm (with optional AI)
     #########################
     def start_local_compression(self, selected_files):
         if not selected_files:
@@ -316,22 +313,13 @@ class SmartCompressApp:
         if split_mb <= 0:
             try:
                 if use_ai:
-                    # AI-based compression path
+                    # AI-based compression path (placeholder)
                     self.do_local_ai_compression(selected_files, out_archive, algo, level)
                 else:
-                    # Normal path
                     if algo == "zip":
                         self.do_local_zip(selected_files, out_archive)
-                    elif algo == "zstd":
-                        self.do_local_zstd(selected_files, out_archive, level)
-                    elif algo == "brotli":
-                        self.do_local_brotli(selected_files, out_archive, level)
-                    elif algo == "7z":
-                        self.do_local_7z(selected_files, out_archive, level)
-                    elif algo == "xz":
-                        self.do_local_xz(selected_files, out_archive, level)
                     else:
-                        messagebox.showerror("Unknown Algorithm", f"'{algo}' not supported.")
+                        messagebox.showerror("Unknown Algorithm", f"'{algo}' not fully supported.")
             except Exception as e:
                 logging.error(f"Error during local compression: {e}")
                 messagebox.showerror("Local Compression Error", str(e))
@@ -350,9 +338,6 @@ class SmartCompressApp:
         self.progress_bar["value"] = 0
 
     def local_split_and_compress(self, file_path, part_size, algo, level, use_ai=False):
-        """
-        Modified to handle AI-based chunk compression if use_ai=True
-        """
         file_size = os.path.getsize(file_path)
         base_name = os.path.basename(file_path)
         num_parts = math.ceil(file_size / part_size)
@@ -361,32 +346,27 @@ class SmartCompressApp:
             for part_idx in range(num_parts):
                 chunk_data = f.read(part_size)
                 part_out = f"{base_name}.part{part_idx}.{algo}"
+
                 if use_ai:
-                    # AI compression placeholder
                     self.ai_compress_chunk(chunk_data, part_out)
                 else:
-                    # Normal approach, e.g. if algo == "zip"
                     if algo == "zip":
                         with zipfile.ZipFile(part_out, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
                             zf.writestr(base_name, chunk_data)
-                    # Additional logic for others if needed
+
                 accumulated += len(chunk_data)
                 self.root.after(0, self.update_progressbar, accumulated)
+
         messagebox.showinfo("Split-Compression Complete", f"Created {num_parts} parts from {base_name}")
 
     def do_local_ai_compression(self, selected_files, out_path, algo, level):
-        """
-        Placeholder for an AI-based compression approach that doesn't lose data integrity.
-        In reality, you'd need a specialized library or a custom neural network approach.
-        """
-        # We'll do a naive approach: read all files, "pretend" to do advanced AI compression
         accumulated = 0
         with open(out_path, 'wb') as fout:
             for file_path in selected_files:
                 file_size = os.path.getsize(file_path)
                 with open(file_path, 'rb') as fin:
                     data = fin.read()
-                    # Some placeholder "AI transform"
+                    # Fake "AI" approach: reverse the bytes
                     compressed_data = self.ai_compress_chunk(data)
                     fout.write(compressed_data)
                 accumulated += file_size
@@ -395,40 +375,37 @@ class SmartCompressApp:
         messagebox.showinfo("AI Compression Complete", f"AI-compressed {len(selected_files)} files to {out_path}")
 
     def ai_compress_chunk(self, chunk_data, out_file_path=None):
-        """
-        Placeholder 'AI-based' compression function that returns a compressed version of 'chunk_data'.
-        If out_file_path is provided, we might write directly to a file.
-        """
-        # In reality, you'd do something like a custom neural net or advanced method.
-        # We'll just do a trivial transform: reverse the data. Not real compression!
-        # This is purely a demonstration.
-
-        # "AI" approach: let's just pretend to reorder bytes
-        fake_compressed = chunk_data[::-1]  # Reverse the chunk as a silly placeholder
-
-        if out_file_path is not None:
-            # If called in chunk-splitting scenario
+        fake_compressed = chunk_data[::-1]
+        if out_file_path:
             with open(out_file_path, 'wb') as f:
                 f.write(fake_compressed)
             return
-
-        # Otherwise, return it
         return fake_compressed
 
+    def do_local_zip(self, selected_files, out_path):
+        import zipfile
+        accumulated = 0
+        with zipfile.ZipFile(out_path, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+            for file_path in selected_files:
+                file_size = os.path.getsize(file_path)
+                arcname = os.path.basename(file_path)
+                with open(file_path, 'rb') as fin:
+                    data = fin.read()
+                    zf.writestr(arcname, data)
+                accumulated += file_size
+                self.root.after(0, self.update_progressbar, accumulated)
+
+        messagebox.showinfo("Compression Complete", f"Files compressed into {out_path}")
+
     #########################
-    #   Real "Cloud" with Google Drive
+    #   Cloud Compression (pydrive2 Demo)
     #########################
     def start_cloud_compression(self, selected_files):
-        """
-        We'll demonstrate a real approach for Google Drive using pydrive2.
-        User can also choose to split the files before uploading.
-        """
         if not PYDRIVE_AVAILABLE:
             messagebox.showerror("pydrive2 Missing",
                                  "You must install pydrive2 (pip install pydrive2) and have client_secrets.json.")
             return
 
-        # If not logged in, do it now
         if not self.gauth or not self.gdrive:
             if not self.google_drive_login():
                 return
@@ -447,10 +424,6 @@ class SmartCompressApp:
         self.progress_bar["value"] = 0
 
     def google_drive_login(self):
-        """
-        Real Google Drive authentication using pydrive2.
-        Expects client_secrets.json or credentials in the working dir.
-        """
         from pydrive2.auth import GoogleAuth
         from pydrive2.drive import GoogleDrive
 
@@ -491,7 +464,6 @@ class SmartCompressApp:
 
         self.is_compressing = False
         self.update_progress_label("No compression in progress")
-
         messagebox.showinfo("Cloud Upload Complete", f"Uploaded '{base_name}' to Google Drive.")
 
     def cloud_split_and_upload_google_drive(self, file_path, split_mb):
@@ -522,6 +494,7 @@ class SmartCompressApp:
 
         self.is_compressing = False
         self.update_progress_label("No compression in progress")
+        self.progress_bar["value"] = 0
         messagebox.showinfo(
             "Cloud Split Upload Complete",
             f"Uploaded {base_name} in {num_parts} parts to Google Drive."
@@ -568,6 +541,7 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = SmartCompressApp(root)
     root.mainloop()
+
 
 
 
